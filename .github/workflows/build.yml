@@ -1,0 +1,66 @@
+name: Build & test
+
+# Builds the debug phone + watch APKs and runs the unit tests.
+# No secrets are used: a build without secrets.properties starts unconfigured (by design),
+# and no signing keystore is needed for debug builds.
+
+on:
+  push:
+    branches: [hugh/main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Also validates the Gradle wrapper checksum and caches dependencies.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # The native secrets lib needs the exact NDK + CMake pinned by the project.
+      - name: Install Android NDK and CMake
+        run: |
+          NDK_VERSION=$(grep '^openzeekr.ndkVersion=' gradle.properties | cut -d= -f2)
+          echo "NDK $NDK_VERSION"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-34" "build-tools;34.0.0" "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
+
+      - name: Build debug APKs and run unit tests
+        run: ./gradlew --stacktrace assembleDebug testDebugUnitTest
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: "**/build/reports/tests/"
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload debug APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apks
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            wear/build/outputs/apk/debug/*.apk
+          retention-days: 7
